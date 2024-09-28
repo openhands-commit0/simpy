@@ -3,9 +3,7 @@ with the real-time (aka *wall-clock time*).
 
 """
 from time import monotonic, sleep
-
 from simpy.core import EmptySchedule, Environment, Infinity, SimTime
-
 
 class RealtimeEnvironment(Environment):
     """Execution environment for an event-based simulation which is
@@ -21,14 +19,8 @@ class RealtimeEnvironment(Environment):
 
     """
 
-    def __init__(
-        self,
-        initial_time: SimTime = 0,
-        factor: float = 1.0,
-        strict: bool = True,
-    ):
+    def __init__(self, initial_time: SimTime=0, factor: float=1.0, strict: bool=True):
         Environment.__init__(self, initial_time)
-
         self.env_start = initial_time
         self.real_start = monotonic()
         self._factor = factor
@@ -37,14 +29,14 @@ class RealtimeEnvironment(Environment):
     @property
     def factor(self) -> float:
         """Scaling factor of the real-time."""
-        return self._factor
+        pass
 
     @property
     def strict(self) -> bool:
         """Running mode of the environment. :meth:`step()` will raise a
         :exc:`RuntimeError` if this is set to ``True`` and the processing of
         events takes too long."""
-        return self._strict
+        pass
 
     def sync(self) -> None:
         """Synchronize the internal time with the current wall-clock time.
@@ -54,7 +46,7 @@ class RealtimeEnvironment(Environment):
         calling :meth:`run()` or :meth:`step()`.
 
         """
-        self.real_start = monotonic()
+        pass
 
     def step(self) -> None:
         """Process the next event after enough real-time has passed for the
@@ -65,26 +57,4 @@ class RealtimeEnvironment(Environment):
         the event is processed too slowly.
 
         """
-        evt_time = self.peek()
-
-        if evt_time is Infinity:
-            raise EmptySchedule
-
-        real_time = self.real_start + (evt_time - self.env_start) * self.factor
-
-        if self.strict and monotonic() - real_time > self.factor:
-            # Events scheduled for time *t* may take just up to *t+1*
-            # for their computation, before an error is raised.
-            delta = monotonic() - real_time
-            raise RuntimeError(f'Simulation too slow for real time ({delta:.3f}s).')
-
-        # Sleep in a loop to fix inaccuracies of windows (see
-        # http://stackoverflow.com/a/15967564 for details) and to ignore
-        # interrupts.
-        while True:
-            delta = real_time - monotonic()
-            if delta <= 0:
-                break
-            sleep(delta)
-
-        Environment.step(self)
+        pass

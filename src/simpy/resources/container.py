@@ -8,14 +8,10 @@ fuel tanks.
 
 """
 from __future__ import annotations
-
 from typing import TYPE_CHECKING, Optional, Union
-
 from simpy.core import BoundClass, Environment
 from simpy.resources import base
-
 ContainerAmount = Union[int, float]
-
 
 class ContainerPut(base.Put):
     """Request to put *amount* of matter into the *container*. The request will
@@ -29,10 +25,8 @@ class ContainerPut(base.Put):
         if amount <= 0:
             raise ValueError(f'amount(={amount}) must be > 0.')
         self.amount = amount
-        """The amount of matter to be put into the container."""
-
+        'The amount of matter to be put into the container.'
         super().__init__(container)
-
 
 class ContainerGet(base.Get):
     """Request to get *amount* of matter from the *container*. The request will
@@ -46,10 +40,8 @@ class ContainerGet(base.Get):
         if amount <= 0:
             raise ValueError(f'amount(={amount}) must be > 0.')
         self.amount = amount
-        """The amount of matter to be taken out of the container."""
-
+        'The amount of matter to be taken out of the container.'
         super().__init__(container)
-
 
 class Container(base.BaseResource):
     """Resource containing up to *capacity* of matter which may either be
@@ -68,58 +60,29 @@ class Container(base.BaseResource):
 
     """
 
-    def __init__(
-        self,
-        env: Environment,
-        capacity: ContainerAmount = float('inf'),
-        init: ContainerAmount = 0,
-    ):
+    def __init__(self, env: Environment, capacity: ContainerAmount=float('inf'), init: ContainerAmount=0):
         if capacity <= 0:
             raise ValueError('"capacity" must be > 0.')
         if init < 0:
             raise ValueError('"init" must be >= 0.')
         if init > capacity:
             raise ValueError('"init" must be <= "capacity".')
-
         super().__init__(env, capacity)
-
         self._level = init
 
     @property
     def level(self) -> ContainerAmount:
         """The current amount of the matter in the container."""
-        return self._level
-
+        pass
     if TYPE_CHECKING:
 
-        def put(  # type: ignore[override]
-            self, amount: ContainerAmount
-        ) -> ContainerPut:
+        def put(self, amount: ContainerAmount) -> ContainerPut:
             """Request to put *amount* of matter into the container."""
-            return ContainerPut(self, amount)
+            pass
 
-        def get(  # type: ignore[override]
-            self, amount: ContainerAmount
-        ) -> ContainerGet:
+        def get(self, amount: ContainerAmount) -> ContainerGet:
             """Request to get *amount* of matter out of the container."""
-            return ContainerGet(self, amount)
-
+            pass
     else:
         put = BoundClass(ContainerPut)
         get = BoundClass(ContainerGet)
-
-    def _do_put(self, event: ContainerPut) -> Optional[bool]:
-        if self._capacity - self._level >= event.amount:
-            self._level += event.amount
-            event.succeed()
-            return True
-        else:
-            return None
-
-    def _do_get(self, event: ContainerGet) -> Optional[bool]:
-        if self._level >= event.amount:
-            self._level -= event.amount
-            event.succeed()
-            return True
-        else:
-            return None

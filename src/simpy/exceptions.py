@@ -3,13 +3,10 @@ SimPy specific exceptions.
 
 """
 from __future__ import annotations
-
 from typing import Any, Optional
-
 
 class SimPyException(Exception):
     """Base class for all SimPy specific exceptions."""
-
 
 class Interrupt(SimPyException):
     """Exception thrown into a process if it is interrupted (see
@@ -32,4 +29,4 @@ class Interrupt(SimPyException):
     @property
     def cause(self) -> Optional[Any]:
         """The cause of the interrupt or ``None`` if no cause was provided."""
-        return self.args[0]
+        pass
