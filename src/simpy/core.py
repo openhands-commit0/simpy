@@ -235,10 +235,10 @@ class Environment:
                 raise
             if isinstance(e, ValueError) and str(e).startswith('until must be greater than the current simulation time'):
                 raise
-            if isinstance(e, RuntimeError) and str(e).startswith('Simulation too slow for real time')):
+            if isinstance(e, RuntimeError) and str(e).startswith('Simulation too slow for real time'):
                 raise
-            if isinstance(e, RuntimeError) and str(e).startswith('No scheduled events left but "until" event was not triggered')):
+            if isinstance(e, RuntimeError) and str(e).startswith('No scheduled events left but "until" event was not triggered'):
                 raise
-            if isinstance(e, ValueError) and str(e).startswith('delay must be > 0')):
+            if isinstance(e, ValueError) and str(e).startswith('delay must be > 0'):
                 raise
             raise
