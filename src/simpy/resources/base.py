@@ -55,7 +55,8 @@ class Put(Event, ContextManager['Put'], Generic[ResourceType]):
         method is called automatically.
 
         """
-        pass
+        if self.resource.put_queue and self in self.resource.put_queue:
+            self.resource.put_queue.remove(self)
 
 class Get(Event, ContextManager['Get'], Generic[ResourceType]):
     """Generic event for requesting to get something from the *resource*.
@@ -98,7 +99,8 @@ class Get(Event, ContextManager['Get'], Generic[ResourceType]):
         method is called automatically.
 
         """
-        pass
+        if self.resource.get_queue and self in self.resource.get_queue:
+            self.resource.get_queue.remove(self)
 PutType = TypeVar('PutType', bound=Put)
 GetType = TypeVar('GetType', bound=Get)
 
@@ -137,7 +139,7 @@ class BaseResource(Generic[PutType, GetType]):
     @property
     def capacity(self) -> Union[float, int]:
         """Maximum capacity of the resource."""
-        pass
+        return self._capacity
     if TYPE_CHECKING:
 
         def put(self) -> Put:
@@ -176,7 +178,17 @@ class BaseResource(Generic[PutType, GetType]):
         calls :meth:`_do_put` to check if the conditions for the event are met.
         If :meth:`_do_put` returns ``False``, the iteration is stopped early.
         """
-        pass
+        # Maintain queue order by iterating over a copy of the queue
+        queue = self.put_queue.copy()
+        idx = 0
+        while idx < len(queue):
+            if queue[idx] not in self.put_queue:
+                # Request has been canceled
+                idx += 1
+                continue
+            if not self._do_put(queue[idx]):
+                break
+            idx += 1
 
     def _do_get(self, event: GetType) -> Optional[bool]:
         """Perform the *get* operation.
@@ -201,4 +213,14 @@ class BaseResource(Generic[PutType, GetType]):
         calls :meth:`_do_get` to check if the conditions for the event are met.
         If :meth:`_do_get` returns ``False``, the iteration is stopped early.
         """
-        pass
+        # Maintain queue order by iterating over a copy of the queue
+        queue = self.get_queue.copy()
+        idx = 0
+        while idx < len(queue):
+            if queue[idx] not in self.get_queue:
+                # Request has been canceled
+                idx += 1
+                continue
+            if not self._do_get(queue[idx]):
+                break
+            idx += 1

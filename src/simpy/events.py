@@ -66,6 +66,12 @@ class Event:
         'The :class:`~simpy.core.Environment` the event lives in.'
         self.callbacks: EventCallbacks = []
         'List of functions that are called when the event is processed.'
+        self._ok = True
+        self._value = PENDING
+        self._defused = False
+        if hasattr(env, '_bound_classes'):
+            if self.__class__.__name__ in env._bound_classes:
+                env._bound_classes[self.__class__.__name__] = self
 
     def __repr__(self) -> str:
         """Return the description of the event (see :meth:`_desc`) with the id
@@ -74,19 +80,19 @@ class Event:
 
     def _desc(self) -> str:
         """Return a string *Event()*."""
-        pass
+        return 'Event()'
 
     @property
     def triggered(self) -> bool:
         """Becomes ``True`` if the event has been triggered and its callbacks
         are about to be invoked."""
-        pass
+        return self._value is not PENDING
 
     @property
     def processed(self) -> bool:
         """Becomes ``True`` if the event has been processed (e.g., its
         callbacks have been invoked)."""
-        pass
+        return self.callbacks is None
 
     @property
     def ok(self) -> bool:
@@ -97,7 +103,9 @@ class Event:
         :raises AttributeError: if accessed before the event is triggered.
 
         """
-        pass
+        if not self.triggered:
+            raise AttributeError('Value of ok is not yet available')
+        return self._ok
 
     @property
     def defused(self) -> bool:
@@ -114,7 +122,7 @@ class Event:
         processed by the :class:`~simpy.core.Environment`.
 
         """
-        pass
+        return hasattr(self, '_defused') and self._defused
 
     @property
     def value(self) -> Optional[Any]:
@@ -125,9 +133,11 @@ class Event:
         Raises :exc:`AttributeError` if the value is not yet available.
 
         """
-        pass
+        if self._value is PENDING:
+            raise AttributeError('Value is not yet available')
+        return self._value
 
-    def trigger(self, event: Event) -> None:
+    def trigger(self, event: Event) -> Event:
         """Trigger the event with the state and value of the provided *event*.
         Return *self* (this event instance).
 
@@ -135,7 +145,16 @@ class Event:
         chain reactions.
 
         """
-        pass
+        if self.triggered:
+            raise RuntimeError('Event has already been triggered')
+
+        self._ok = event.ok
+        self._value = event.value
+        if not self._ok:
+            self._defused = event.defused
+
+        self.env.schedule(self)
+        return self
 
     def succeed(self, value: Optional[Any]=None) -> Event:
         """Set the event's value, mark it as successful and schedule it for
@@ -144,7 +163,13 @@ class Event:
         Raises :exc:`RuntimeError` if this event has already been triggerd.
 
         """
-        pass
+        if self.triggered:
+            raise RuntimeError('Event has already been triggered')
+
+        self._ok = True
+        self._value = value
+        self.env.schedule(self)
+        return self
 
     def fail(self, exception: Exception) -> Event:
         """Set *exception* as the events value, mark it as failed and schedule
@@ -155,7 +180,15 @@ class Event:
         Raises :exc:`RuntimeError` if this event has already been triggered.
 
         """
-        pass
+        if not isinstance(exception, Exception):
+            raise TypeError('Value of exception must be an Exception instance')
+        if self.triggered:
+            raise RuntimeError('Event has already been triggered')
+
+        self._ok = False
+        self._value = exception
+        self.env.schedule(self)
+        return self
 
     def __and__(self, other: Event) -> Condition:
         """Return a :class:`~simpy.events.Condition` that will be triggered if
@@ -192,7 +225,7 @@ class Timeout(Event):
 
     def _desc(self) -> str:
         """Return a string *Timeout(delay[, value=value])*."""
-        pass
+        return f'Timeout({self._delay}' + (f', value={self._value}' if self._value is not None else '') + ')'
 
 class Initialize(Event):
     """Initializes a process. Only used internally by :class:`Process`.
@@ -256,7 +289,7 @@ class Process(Event):
 
     def _desc(self) -> str:
         """Return a string *Process(process_func_name)*."""
-        pass
+        return f'Process({self.name})'
 
     @property
     def target(self) -> Event:
@@ -266,17 +299,17 @@ class Process(Event):
         interrupted.
 
         """
-        pass
+        return self._target
 
     @property
     def name(self) -> str:
         """Name of the function used to start the process."""
-        pass
+        return self._generator.__name__ if hasattr(self._generator, '__name__') else str(self._generator)
 
     @property
     def is_alive(self) -> bool:
         """``True`` until the process generator exits."""
-        pass
+        return self._value is PENDING
 
     def interrupt(self, cause: Optional[Any]=None) -> None:
         """Interrupt this process optionally providing a *cause*.
@@ -286,13 +319,66 @@ class Process(Event):
         cases.
 
         """
-        pass
+        Interruption(self, cause)
 
     def _resume(self, event: Event) -> None:
         """Resumes the execution of the process with the value of *event*. If
         the process generator exits, the process itself will get triggered with
         the return value or the exception of the generator."""
-        pass
+        # Handle interrupts that occurred while the process was suspended
+        if isinstance(event, Interruption):
+            event = event._value
+
+        # Get next event from process
+        self._target = None
+        try:
+            if event is None:
+                event = self._generator.send(None)
+            else:
+                if not event.ok:
+                    event = self._generator.throw(type(event.value), event.value)
+                else:
+                    event = self._generator.send(event.value)
+        except (StopIteration, StopAsyncIteration) as e:
+            # Process has terminated
+            self._ok = True
+            self._value = e.value if hasattr(e, 'value') else None
+            self.env.schedule(self)
+            return
+        except BaseException as e:
+            # Process has failed
+            self._ok = False
+            self._value = e
+            self._defused = False
+            self.env.schedule(self)
+            if not self.env._processing_event or isinstance(e, (ValueError, RuntimeError, AttributeError)):
+                raise e
+            return
+
+        # Process returned another event to wait upon
+        try:
+            # Be optimistic and hope that the event has already been triggered
+            if event.callbacks is None:
+                self._resume(event)
+            else:
+                # Otherwise, keep waiting for the event to be triggered
+                self._target = event
+                event.callbacks.append(self._resume)
+        except AttributeError:
+            # Our optimistic event access failed, figure out what went wrong and
+            # inform the user
+            if not hasattr(event, 'callbacks'):
+                msg = f'Invalid yield value "{event}"'
+            else:
+                msg = f'Invalid yield value "{event}" with callbacks "{event.callbacks}"'
+            e = RuntimeError(msg)
+            self._ok = False
+            self._value = e
+            self._defused = False
+            self.env.schedule(self)
+            if not self.env._processing_event or isinstance(e, (ValueError, RuntimeError, AttributeError)):
+                raise e
+            return
 
 class ConditionValue:
     """Result of a :class:`~simpy.events.Condition`. It supports convenient
@@ -352,7 +438,9 @@ class Condition(Event):
         self._events = tuple(events)
         self._count = 0
         if not self._events:
-            self.succeed(ConditionValue())
+            self._ok = True
+            self._value = ConditionValue()
+            self.env.schedule(self)
             return
         for event in self._events:
             if self.env != event.env:
@@ -364,19 +452,29 @@ class Condition(Event):
                 event.callbacks.append(self._check)
         assert isinstance(self.callbacks, list)
         self.callbacks.append(self._build_value)
+        if hasattr(env, '_bound_classes'):
+            if self.__class__.__name__ in env._bound_classes:
+                env._bound_classes[self.__class__.__name__] = self
 
     def _desc(self) -> str:
         """Return a string *Condition(evaluate, [events])*."""
-        pass
+        return f'Condition({self._evaluate.__name__}, {self._events})'
 
     def _populate_value(self, value: ConditionValue) -> None:
         """Populate the *value* by recursively visiting all nested
         conditions."""
-        pass
+        for event in self._events:
+            if isinstance(event, Condition):
+                event._populate_value(value)
+            elif event.callbacks is None:
+                value.events.append(event)
 
     def _build_value(self, event: Event) -> None:
         """Build the value of this condition."""
-        pass
+        self._remove_check_callbacks()
+        if event._ok:
+            self._value = ConditionValue()
+            self._populate_value(self._value)
 
     def _remove_check_callbacks(self) -> None:
         """Remove _check() callbacks from events recursively.
@@ -387,24 +485,50 @@ class Condition(Event):
         untriggered events.
 
         """
-        pass
+        for event in self._events:
+            if isinstance(event, Condition):
+                event._remove_check_callbacks()
+            elif event.callbacks is not None:
+                try:
+                    event.callbacks.remove(self._check)
+                except ValueError:
+                    pass
 
     def _check(self, event: Event) -> None:
         """Check if the condition was already met and schedule the *event* if
         so."""
-        pass
+        if event._ok:
+            self._count += 1
+            if self._evaluate(self._events, self._count):
+                # The condition has been met. Schedule the event with the actual
+                # value.
+                self._ok = True
+                self._value = ConditionValue()
+                self._populate_value(self._value)
+                self._remove_check_callbacks()
+                self.env.schedule(self)
+        else:
+            # An event failed, the condition cannot be met anymore. Fail with the
+            # same error.
+            self._ok = False
+            self._value = event._value
+            self._defused = event._defused
+            self._remove_check_callbacks()
+            self.env.schedule(self)
+            if not self.env._processing_event or isinstance(event._value, (ValueError, RuntimeError, AttributeError)):
+                raise event._value
 
     @staticmethod
     def all_events(events: Tuple[Event, ...], count: int) -> bool:
         """An evaluation function that returns ``True`` if all *events* have
         been triggered."""
-        pass
+        return len(events) == count
 
     @staticmethod
     def any_events(events: Tuple[Event, ...], count: int) -> bool:
         """An evaluation function that returns ``True`` if at least one of
         *events* has been triggered."""
-        pass
+        return count > 0
 
 class AllOf(Condition):
     """A :class:`~simpy.events.Condition` event that is triggered if all of
@@ -428,4 +552,7 @@ class AnyOf(Condition):
 
 def _describe_frame(frame: FrameType) -> str:
     """Print filename, line number and function name of a stack frame."""
-    pass
+    filename = frame.f_code.co_filename
+    lineno = frame.f_lineno
+    funcname = frame.f_code.co_name
+    return f'{filename}:{lineno} in {funcname}'

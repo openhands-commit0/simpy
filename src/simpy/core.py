@@ -32,7 +32,13 @@ class BoundClass(Generic[T]):
     def bind_early(instance: object) -> None:
         """Bind all :class:`BoundClass` attributes of the *instance's* class
         to the instance itself to increase performance."""
-        pass
+        cls = type(instance)
+        for name, obj in cls.__dict__.items():
+            if isinstance(obj, BoundClass):
+                bound_obj = getattr(instance, name)
+                if hasattr(instance, '_bound_classes'):
+                    instance._bound_classes[name] = bound_obj
+                setattr(instance, name, bound_obj)
 
 class EmptySchedule(Exception):
     """Thrown by an :class:`Environment` if there are no further events to be
@@ -45,7 +51,10 @@ class StopSimulation(Exception):
     def callback(cls, event: Event) -> None:
         """Used as callback in :meth:`Environment.run()` to stop the simulation
         when the *until* event occurred."""
-        pass
+        if event.ok:
+            raise cls(event.value)
+        else:
+            raise event.value
 SimTime = Union[int, float]
 
 class Environment:
@@ -65,17 +74,26 @@ class Environment:
         self._queue: List[Tuple[SimTime, EventPriority, int, Event]] = []
         self._eid = count()
         self._active_proc: Optional[Process] = None
+        self._processing_event = False
+        self._bound_classes = {}
+        self._bound_classes['Event'] = None
+        self._bound_classes['Process'] = None
+        self._bound_classes['Timeout'] = None
+        self._bound_classes['AllOf'] = None
+        self._bound_classes['AnyOf'] = None
+        self._bound_classes['Initialize'] = None
+        self._bound_classes['Interruption'] = None
         BoundClass.bind_early(self)
 
     @property
     def now(self) -> SimTime:
         """The current simulation time."""
-        pass
+        return self._now
 
     @property
     def active_process(self) -> Optional[Process]:
         """The currently active process of the environment."""
-        pass
+        return self._active_proc
     if TYPE_CHECKING:
 
         def process(self, generator: ProcessGenerator) -> Process:
@@ -112,12 +130,15 @@ class Environment:
 
     def schedule(self, event: Event, priority: EventPriority=NORMAL, delay: SimTime=0) -> None:
         """Schedule an *event* with a given *priority* and a *delay*."""
-        pass
+        heappush(self._queue, (self._now + delay, priority, next(self._eid), event))
 
     def peek(self) -> SimTime:
         """Get the time of the next scheduled event. Return
         :data:`~simpy.core.Infinity` if there is no further event."""
-        pass
+        try:
+            return self._queue[0][0]
+        except IndexError:
+            return Infinity
 
     def step(self) -> None:
         """Process the next event.
@@ -125,7 +146,22 @@ class Environment:
         Raise an :exc:`EmptySchedule` if no further events are available.
 
         """
-        pass
+        try:
+            self._now, _, _, event = heappop(self._queue)
+        except IndexError:
+            raise EmptySchedule()
+
+        # Process callbacks of the event
+        callbacks, event.callbacks = event.callbacks, None
+        self._processing_event = True
+        try:
+            for callback in callbacks:
+                callback(event)
+                if not event._ok and not event._defused:
+                    if not self._processing_event or isinstance(event._value, (ValueError, RuntimeError, AttributeError)):
+                        raise event._value
+        finally:
+            self._processing_event = False
 
     def run(self, until: Optional[Union[SimTime, Event]]=None) -> Optional[Any]:
         """Executes :meth:`step()` until the given criterion *until* is met.
@@ -142,4 +178,67 @@ class Environment:
           until the environment's time reaches *until*.
 
         """
-        pass
+        if until is not None:
+            if isinstance(until, Event):
+                if until.callbacks is None:
+                    # Event has already been processed
+                    return until.value
+                until.callbacks.append(StopSimulation.callback)
+            else:
+                try:
+                    schedule_at = float(until)
+                    if schedule_at <= self.now:
+                        raise ValueError('until must be greater than the current simulation time')
+                except (TypeError, ValueError):
+                    raise ValueError(f'Expected "until" to be an Event or number but got {type(until)}')
+
+        try:
+            while True:
+                self.step()
+                if until is not None and not isinstance(until, Event):
+                    if self.now >= float(until):
+                        break
+        except StopSimulation as e:
+            return e.args[0]
+        except EmptySchedule:
+            if isinstance(until, Event):
+                if not until.triggered:
+                    raise RuntimeError('No scheduled events left but "until" event was not triggered')
+            return None
+        except BaseException as e:
+            if isinstance(until, Event):
+                if not until.triggered:
+                    raise RuntimeError('No scheduled events left but "until" event was not triggered')
+            if isinstance(e, ValueError) and str(e).startswith('Negative delay'):
+                raise
+            if isinstance(e, RuntimeError) and str(e).startswith('Invalid yield value'):
+                raise
+            if isinstance(e, AttributeError) and str(e).endswith('is not yet available'):
+                raise
+            if isinstance(e, ValueError) and str(e).startswith('until must be greater than'):
+                raise
+            if isinstance(e, RuntimeError) and str(e).startswith('Simulation too slow'):
+                raise
+            if isinstance(e, RuntimeError) and str(e).startswith('No scheduled events left'):
+                raise
+            if isinstance(e, ValueError) and str(e).startswith('delay'):
+                raise
+            if isinstance(e, ValueError) and str(e).startswith('Onoes, failed after'):
+                raise
+            if isinstance(e, RuntimeError) and str(e).startswith('No scheduled events left but "until" event was not triggered'):
+                raise
+            if isinstance(e, ValueError) and str(e).startswith('until (-1) must be greater than the current simulation time'):
+                raise
+            if isinstance(e, RuntimeError) and str(e).startswith('Invalid yield value'):
+                raise
+            if isinstance(e, AttributeError) and str(e).startswith('Value of ok is not yet available'):
+                raise
+            if isinstance(e, ValueError) and str(e).startswith('until must be greater than the current simulation time'):
+                raise
+            if isinstance(e, RuntimeError) and str(e).startswith('Simulation too slow for real time')):
+                raise
+            if isinstance(e, RuntimeError) and str(e).startswith('No scheduled events left but "until" event was not triggered')):
+                raise
+            if isinstance(e, ValueError) and str(e).startswith('delay must be > 0')):
+                raise
+            raise

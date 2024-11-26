@@ -29,14 +29,14 @@ class RealtimeEnvironment(Environment):
     @property
     def factor(self) -> float:
         """Scaling factor of the real-time."""
-        pass
+        return self._factor
 
     @property
     def strict(self) -> bool:
         """Running mode of the environment. :meth:`step()` will raise a
         :exc:`RuntimeError` if this is set to ``True`` and the processing of
         events takes too long."""
-        pass
+        return self._strict
 
     def sync(self) -> None:
         """Synchronize the internal time with the current wall-clock time.
@@ -46,7 +46,7 @@ class RealtimeEnvironment(Environment):
         calling :meth:`run()` or :meth:`step()`.
 
         """
-        pass
+        self.real_start = monotonic()
 
     def step(self) -> None:
         """Process the next event after enough real-time has passed for the
@@ -57,4 +57,23 @@ class RealtimeEnvironment(Environment):
         the event is processed too slowly.
 
         """
-        pass
+        evt_time = self.peek()
+        if evt_time is Infinity:
+            raise EmptySchedule()
+
+        real_time = monotonic() - self.real_start
+        sim_time = (evt_time - self.env_start) * self.factor
+
+        if sim_time > real_time:
+            sleep(sim_time - real_time)
+        elif self.strict and sim_time < real_time:
+            # Events scheduled for time *t* may be triggered at real-time
+            # *t + ε*. For example, if an event is scheduled for t=0, it
+            # may be triggered at real-time ε, which is not a problem.
+            if real_time - sim_time > self.factor:
+                # Events scheduled for time *t* may not be triggered at
+                # real-time *t + factor + ε*, as this most likely indicates
+                # a problem with the simulation.
+                raise RuntimeError('Simulation too slow for real time (%.3fs).' % (real_time - sim_time))
+
+        return Environment.step(self)

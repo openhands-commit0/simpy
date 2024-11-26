@@ -123,7 +123,10 @@ class SortedQueue(list):
         Raise a :exc:`RuntimeError` if the queue is full.
 
         """
-        pass
+        if self.maxlen is not None and len(self) >= self.maxlen:
+            raise RuntimeError('Cannot append item to full queue')
+        super().append(item)
+        self.sort(key=lambda e: e.key)
 
 class Resource(base.BaseResource):
     """Resource with *capacity* of usage slots that can be requested by
@@ -146,10 +149,26 @@ class Resource(base.BaseResource):
         self.queue = self.put_queue
         'Queue of pending :class:`Request` events. Alias of\n        :attr:`~simpy.resources.base.BaseResource.put_queue`.\n        '
 
+    def _do_put(self, event: Request) -> Optional[bool]:
+        if len(self.users) < self.capacity:
+            self.users.append(event)
+            event.usage_since = self._env.now
+            event.succeed()
+            return True
+        return False
+
+    def _do_get(self, event: Release) -> Optional[bool]:
+        try:
+            self.users.remove(event.request)
+            event.succeed()
+            return True
+        except ValueError:
+            return False
+
     @property
     def count(self) -> int:
         """Number of users currently using the resource."""
-        pass
+        return len(self.users)
     if TYPE_CHECKING:
 
         def request(self) -> Request:

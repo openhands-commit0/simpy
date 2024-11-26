@@ -70,10 +70,24 @@ class Container(base.BaseResource):
         super().__init__(env, capacity)
         self._level = init
 
+    def _do_put(self, event: ContainerPut) -> Optional[bool]:
+        if self._level + event.amount <= self.capacity:
+            self._level += event.amount
+            event.succeed()
+            return True
+        return False
+
+    def _do_get(self, event: ContainerGet) -> Optional[bool]:
+        if self._level >= event.amount:
+            self._level -= event.amount
+            event.succeed(event.amount)
+            return True
+        return False
+
     @property
     def level(self) -> ContainerAmount:
         """The current amount of the matter in the container."""
-        pass
+        return self._level
     if TYPE_CHECKING:
 
         def put(self, amount: ContainerAmount) -> ContainerPut:

@@ -63,6 +63,19 @@ class Store(base.BaseResource):
         super().__init__(env, capacity)
         self.items: List[Any] = []
         'List of the items available in the store.'
+
+    def _do_put(self, event: StorePut) -> Optional[bool]:
+        if len(self.items) < self.capacity:
+            self.items.append(event.item)
+            event.succeed()
+            return True
+        return False
+
+    def _do_get(self, event: StoreGet) -> Optional[bool]:
+        if self.items:
+            event.succeed(self.items.pop(0))
+            return True
+        return False
     if TYPE_CHECKING:
 
         def put(self, item: Any) -> StorePut:
@@ -103,6 +116,19 @@ class PriorityStore(Store):
 
     """
 
+    def _do_put(self, event: StorePut) -> Optional[bool]:
+        if len(self.items) < self.capacity:
+            heappush(self.items, event.item)
+            event.succeed()
+            return True
+        return False
+
+    def _do_get(self, event: StoreGet) -> Optional[bool]:
+        if self.items:
+            event.succeed(heappop(self.items))
+            return True
+        return False
+
 class FilterStore(Store):
     """Resource with *capacity* slots for storing arbitrary objects supporting
     filtered get requests. Like the :class:`Store`, the *capacity* is unlimited
@@ -124,6 +150,21 @@ class FilterStore(Store):
         want it.
 
     """
+
+    def _do_put(self, event: StorePut) -> Optional[bool]:
+        if len(self.items) < self.capacity:
+            self.items.append(event.item)
+            event.succeed()
+            return True
+        return False
+
+    def _do_get(self, event: FilterStoreGet) -> Optional[bool]:
+        for i, item in enumerate(self.items):
+            if event.filter(item):
+                del self.items[i]
+                event.succeed(item)
+                return True
+        return False
     if TYPE_CHECKING:
 
         def get(self, filter: Callable[[Any], bool]=lambda item: True) -> FilterStoreGet:
